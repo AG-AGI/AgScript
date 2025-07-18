@@ -1,159 +1,214 @@
 import tkinter as tk
 from tkinter import messagebox
+import re
 
 class AGScriptInterpreter:
+    """
+    An interpreter for the AG Script language.
+    It handles variable assignments, function definitions/calls,
+    conditional logic, and basic GUI elements with Tkinter.
+    """
     def __init__(self):
         self.variables = {}
-        self.functions = {}
+        self.functions = {
+            'print': {'params': ['val'], 'body': self.native_print, 'is_native': True},
+            'msgbox': {'params': ['msg'], 'body': self.native_msgbox, 'is_native': True},
+            'int': {'params': ['val'], 'body': int, 'is_native': True},
+        }
         self.root = None
         self.buttons = {}
 
-    def eval_expr(self, expr, local_vars=None):
-        local_vars = local_vars or self.variables
-        try:
-            return eval(expr, {}, local_vars)
-        except Exception:
-            return expr.strip('"').strip("'")
+    # ----------------------------------------------------------------------
+    # Native (Built-in) Functions
+    # ----------------------------------------------------------------------
 
-    def call_function(self, name, args):
-        if name not in self.functions:
-            raise Exception(f"Function '{name}' is not defined")
-        func = self.functions[name]
-        if len(args) != len(func['params']):
-            raise Exception(f"Function '{name}' expects {len(func['params'])} arguments but got {len(args)}")
-        local_vars = self.variables.copy()
-        for param, arg in zip(func['params'], args):
-            local_vars[param] = self.eval_expr(arg)
-        try:
-            return eval(func['body'], {}, local_vars)
-        except Exception as e:
-            raise Exception(f"Error in function '{name}': {e}")
+    def native_print(self, *args):
+        """The native 'print' function."""
+        print(*args)
+
+    def native_msgbox(self, msg):
+        """The native 'msgbox' function."""
+        if self.root is None:
+            self.root = tk.Tk()
+            self.root.withdraw()
+        messagebox.showinfo("AG Script Message", str(msg))
+
+    # ----------------------------------------------------------------------
+    # Core Evaluation Logic
+    # ----------------------------------------------------------------------
+
+    def get_eval_scope(self, local_vars=None):
+        """Constructs the scope for the eval() function."""
+        scope = {name: func['body'] for name, func in self.functions.items() if func.get('is_native')}
+        
+        for name, func_def in self.functions.items():
+            if not func_def.get('is_native'):
+                scope[name] = self.create_user_func_lambda(name)
+        
+        scope.update(self.variables)
+        if local_vars:
+            scope.update(local_vars)
+            
+        return scope
+
+    def create_user_func_lambda(self, name):
+        """Creates a Python lambda to wrap a user-defined function call."""
+        def user_func_wrapper(*args):
+            return self.call_user_function(name, list(args))
+        return user_func_wrapper
+
+    def eval_expr(self, expr, local_vars=None):
+        """Evaluates a single AG Script expression."""
+        global_scope = self.get_eval_scope()
+        return eval(expr, global_scope, local_vars if local_vars else {})
+
+    def call_user_function(self, name, args):
+        """Executes a user-defined function."""
+        func_def = self.functions[name]
+        params = func_def['params']
+
+        if len(args) != len(params):
+            raise TypeError(f"{name}() expects {len(params)} arguments but got {len(args)}")
+
+        local_scope = dict(zip(params, args))
+        return self.eval_expr(func_def['body'], local_scope)
+
+    # ----------------------------------------------------------------------
+    # Line-by-Line Execution
+    # ----------------------------------------------------------------------
 
     def run_line(self, line):
+        """Parses and executes a single line of AG Script."""
         line = line.strip()
         if not line or line.startswith("#"):
             return
 
+        # --- Function Definition: func name(params) [return] body ---
         if line.startswith("func "):
-            _, rest = line.split("func ", 1)
-            signature, ret_expr = rest.split("return", 1)
-            signature = signature.strip()
-            ret_expr = ret_expr.strip()
-            name, params = signature.split("(", 1)
-            name = name.strip()
-            params = params.rstrip(")").strip()
-            param_list = [p.strip() for p in params.split(",")] if params else []
-            self.functions[name] = {'params': param_list, 'body': ret_expr}
+            # FIX: Made the 'return' keyword optional in the regex.
+            match = re.match(r'func\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*(?:return\s+)?(.*)', line)
+            if not match:
+                raise SyntaxError(f"Invalid function syntax: {line}")
+            name, params_str, body = match.groups()
+            params = [p.strip() for p in params_str.split(',') if p.strip()]
+            self.functions[name] = {'params': params, 'body': body.strip(), 'is_native': False}
             return
 
-        if line.startswith("if "):
-            _, rest = line.split("if ", 1)
-            cond_end = rest.find(" ")
-            if cond_end == -1:
-                raise Exception("Invalid if syntax")
-            cond = rest[:cond_end].strip()
-            cmd = rest[cond_end+1:].strip()
-            if self.eval_expr(cond):
-                self.run_line(cmd)
-            return
-
-        if '=' in line and not line.startswith(("print", "msgbox", "button")):
-            var_name, expr = line.split('=', 1)
-            var_name = var_name.strip()
-            expr = expr.strip()
-            value = self.eval_expr(expr)
-            self.variables[var_name] = value
-            return
-
-        if line.startswith("print(") and line.endswith(")"):
-            content = line[6:-1].strip()
-            val = self.eval_expr(content)
-            print(val)
-            return
-
-        if line.startswith("msgbox(") and line.endswith(")"):
-            content = line[7:-1].strip()
-            val = self.eval_expr(content)
-            messagebox.showinfo("Message", str(val))
-            return
-
+        # --- Button Definition: button name "Text" action ---
         if line.startswith("button "):
+            match = re.match(r'button\s+([a-zA-Z_]\w*)\s+"([^"]*)"\s+(.*)', line)
+            if not match:
+                raise SyntaxError("Invalid button syntax. Expected: button name \"Text\" action")
+            btn_var_name, btn_text, action = match.groups()
+
             if self.root is None:
                 self.root = tk.Tk()
-                self.root.withdraw()
-
-            parts = line.split(" ", 2)
-            if len(parts) < 3:
-                raise Exception("Invalid button syntax")
-
-            btn_name = parts[1].strip()
-            rest = parts[2].strip()
-
-            # Extract button text in quotes and function call after
-            if rest.startswith('('):
-                # Find closing quote
-                end_quote = rest.find('")')
-                if end_quote == -1:
-                    raise Exception("Invalid button syntax: missing closing quote")
-                btn_text = rest[1:end_quote]
-
-                func_call = rest[end_quote+2:].strip()
-                # Parse function name and optional args
-                if '(' in func_call and func_call.endswith(')'):
-                    fname, fargs_str = func_call.split('(', 1)
-                    fname = fname.strip()
-                    fargs_str = fargs_str[:-1]  # remove trailing )
-                    fargs = [a.strip() for a in fargs_str.split(',')] if fargs_str else []
-                else:
-                    fname = func_call
-                    fargs = []
-
-                def on_click(fname=fname, fargs=fargs):
-                    try:
-                        ret = self.call_function(fname, fargs)
-                        if ret is not None:
-                            print(ret)
-                    except Exception as e:
-                        messagebox.showerror("Error", str(e))
-
-                if btn_name in self.buttons:
-                    btn = self.buttons[btn_name]
-                    btn.config(text=btn_text, command=on_click)
-                else:
-                    btn = tk.Button(self.root, text=btn_text, command=on_click)
-                    btn.pack()
-                    self.buttons[btn_name] = btn
-
-                self.root.deiconify()
-            else:
-                raise Exception("Invalid button syntax")
+                self.root.title("AG Script")
+                self.root.geometry("250x300")
+            
+            def on_click(action=action):
+                try:
+                    result = self.eval_expr(action)
+                    if result is not None:
+                        self.native_msgbox(f"Result: {result}")
+                except Exception as e:
+                    messagebox.showerror("Runtime Error", str(e))
+            
+            btn = tk.Button(self.root, text=btn_text, command=on_click, width=20)
+            btn.pack(pady=5, padx=10)
+            self.buttons[btn_var_name] = btn
             return
 
-        if '(' in line and line.endswith(')'):
-            name, args_str = line.split('(', 1)
-            name = name.strip()
-            args_str = args_str[:-1]
-            args = [a.strip() for a in args_str.split(',')] if args_str else []
-            ret = self.call_function(name, args)
-            if ret is not None:
-                print(ret)
+        # --- If Statement: if condition action ---
+        if line.startswith("if "):
+            rest = line[3:].strip()
+            match = re.match(r'(.+?)\s+(print|msgbox|[a-zA-Z_]\w*.*)', rest)
+            if not match:
+                raise SyntaxError(f"Invalid if syntax: {line}")
+            
+            condition, action = match.groups()[:2]
+            action = rest[rest.find(action):]
+            
+            if self.eval_expr(condition):
+                self.eval_expr(action)
             return
 
-        raise Exception(f"Unknown command: {line}")
+        # --- Variable Assignment: var = expression ---
+        match = re.match(r'^([a-zA-Z_]\w*)\s*=\s*(.*)', line)
+        if match:
+            var_name, expr = match.groups()
+            self.variables[var_name] = self.eval_expr(expr)
+            return
+
+        # --- Expression Statement (e.g., a function call) ---
+        self.eval_expr(line)
 
     def run(self, code):
-        for line in code.splitlines():
+        """Runs a multi-line string of AG Script code."""
+        for i, line in enumerate(code.splitlines()):
             try:
                 self.run_line(line)
             except Exception as e:
-                print(f"Error: {e}")
+                error_message = f"Error on line {i+1}: {line.strip()}\n\n{type(e).__name__}: {e}"
+                print(error_message)
+                if self.root:
+                    messagebox.showerror("Script Error", error_message)
+                return "Execution failed."
 
         if self.root:
+            print("GUI is running. Close the window to exit.")
             self.root.mainloop()
 
-        return "Execution complete"
+        return "Execution complete."
 
-_interpreter_instance = AGScriptInterpreter()
 
-def run(code):
-    return _interpreter_instance.run(code)
+# This is how you would use the interpreter
+if __name__ == '__main__':
+    # Your AG Script code, now working with the fix
+    ag_script_code = """
+# Variable assignment
+x = 10
+y = 20
+
+# Print variables and expressions
+print("x is", x)
+print("y is", y)
+print("x + y is", x + y)
+print("Hello, AG Script!")
+
+# Message box showing sum
+msgbox(x + y)
+
+# Define a function with two parameters (with 'return')
+func add(a, b) return int(a) + int(b)
+
+# Call function directly and print result
+print("Result of add(x,y) is", add(x, y))
+
+# Define a function without parameters
+func greet() return "Hello from a function!"
+
+print(greet())
+
+# Inline if statement that prints only if condition true
+if x > 5 print("x is greater than 5")
+if y < 5 print("This won't print")
+
+# --- GUI Buttons ---
+# Note the corrected syntax: button name "text" action
+
+# Button without args that calls a function
+func say_hello() return "Button pressed: Hello!"
+button btn1 "Say Hello" say_hello()
+
+# Button with args that calls a function
+button btn2 "Add 7 + 8" add(7, 8)
+
+# Button that shows message box when clicked (without 'return')
+func show_msg() msgbox("Button clicked!")
+button btn3 "Show MsgBox" show_msg()
+"""
+
+    # Create an interpreter instance and run the code
+    interpreter = AGScriptInterpreter()
+    interpreter.run(ag_script_code)
