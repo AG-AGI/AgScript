@@ -31,7 +31,8 @@ class AGScriptInterpreter:
         if self.root is None:
             self.root = tk.Tk()
             self.root.withdraw()
-        messagebox.showinfo("AG Script Message", str(msg))
+        # FIX: Explicitly set the parent window for better behavior on all OS
+        messagebox.showinfo("AG Script Message", str(msg), parent=self.root)
 
     # ----------------------------------------------------------------------
     # Core Evaluation Logic
@@ -85,7 +86,6 @@ class AGScriptInterpreter:
 
         # --- Function Definition: func name(params) [return] body ---
         if line.startswith("func "):
-            # FIX: Made the 'return' keyword optional in the regex.
             match = re.match(r'func\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*(?:return\s+)?(.*)', line)
             if not match:
                 raise SyntaxError(f"Invalid function syntax: {line}")
@@ -105,14 +105,23 @@ class AGScriptInterpreter:
                 self.root = tk.Tk()
                 self.root.title("AG Script")
                 self.root.geometry("250x300")
-            
+                self.root.lift() # Helps bring window to the front
+
+            # The command for the button click
             def on_click(action=action):
+                # Added print statements for debugging in your console
+                print(f"--- Button clicked. Action: {action} ---")
                 try:
                     result = self.eval_expr(action)
+                    print(f"Action result: {repr(result)}")
+                    # FIX: This logic now correctly displays the result of any function
                     if result is not None:
+                        # The function's own body might call msgbox(). We only show
+                        # a *new* message box here if the function returns a value.
                         self.native_msgbox(f"Result: {result}")
                 except Exception as e:
-                    messagebox.showerror("Runtime Error", str(e))
+                    print(f"Error during button action: {e}")
+                    messagebox.showerror("Runtime Error", str(e), parent=self.root)
             
             btn = tk.Button(self.root, text=btn_text, command=on_click, width=20)
             btn.pack(pady=5, padx=10)
@@ -126,11 +135,11 @@ class AGScriptInterpreter:
             if not match:
                 raise SyntaxError(f"Invalid if syntax: {line}")
             
-            condition, action = match.groups()[:2]
-            action = rest[rest.find(action):]
+            condition, action_str = match.groups()[:2]
+            action_full = rest[rest.find(action_str):]
             
             if self.eval_expr(condition):
-                self.eval_expr(action)
+                self.eval_expr(action_full)
             return
 
         # --- Variable Assignment: var = expression ---
@@ -152,7 +161,7 @@ class AGScriptInterpreter:
                 error_message = f"Error on line {i+1}: {line.strip()}\n\n{type(e).__name__}: {e}"
                 print(error_message)
                 if self.root:
-                    messagebox.showerror("Script Error", error_message)
+                    messagebox.showerror("Script Error", error_message, parent=self.root)
                 return "Execution failed."
 
         if self.root:
@@ -161,10 +170,14 @@ class AGScriptInterpreter:
 
         return "Execution complete."
 
+def run(code):
+    """Convenience function to run AG Script code."""
+    interpreter = AGScriptInterpreter()
+    return interpreter.run(code)
 
 # This is how you would use the interpreter
 if __name__ == '__main__':
-    # Your AG Script code, now working with the fix
+    # Your AG Script code
     ag_script_code = """
 # Variable assignment
 x = 10
@@ -175,9 +188,6 @@ print("x is", x)
 print("y is", y)
 print("x + y is", x + y)
 print("Hello, AG Script!")
-
-# Message box showing sum
-msgbox(x + y)
 
 # Define a function with two parameters (with 'return')
 func add(a, b) return int(a) + int(b)
@@ -195,8 +205,6 @@ if x > 5 print("x is greater than 5")
 if y < 5 print("This won't print")
 
 # --- GUI Buttons ---
-# Note the corrected syntax: button name "text" action
-
 # Button without args that calls a function
 func say_hello() return "Button pressed: Hello!"
 button btn1 "Say Hello" say_hello()
@@ -204,8 +212,8 @@ button btn1 "Say Hello" say_hello()
 # Button with args that calls a function
 button btn2 "Add 7 + 8" add(7, 8)
 
-# Button that shows message box when clicked (without 'return')
-func show_msg() msgbox("Button clicked!")
+# Button that shows message box from within the function
+func show_msg() msgbox("This message comes from *inside* the function!")
 button btn3 "Show MsgBox" show_msg()
 """
 

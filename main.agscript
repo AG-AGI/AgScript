@@ -1,18 +1,35 @@
 x = 10
 y = 20
-print(x)
-print(y)
-print(x + y)
+
+# Print variables and expressions
+print("x is", x)
+print("y is", y)
+print("x + y is", x + y)
 print("Hello, AG Script!")
-msgbox(x + y)
+
+# Define a function with two parameters (with 'return')
 func add(a, b) return int(a) + int(b)
-print(add(x, y))
-func greet() return "Hello from function!"
+
+# Call function directly and print result
+print("Result of add(x,y) is", add(x, y))
+
+# Define a function without parameters
+func greet() return "Hello from a function!"
+
 print(greet())
+
+# Inline if statement that prints only if condition true
 if x > 5 print("x is greater than 5")
 if y < 5 print("This won't print")
+
+# --- GUI Buttons ---
+# Button without args that calls a function
 func say_hello() return "Button pressed: Hello!"
-button btn1("Say Hello") say_hello()
-button btn2("Add 7 + 8") add(7, 8)
-func show_msg() msgbox("Button clicked!")
-button btn3("Show MsgBox") show_msg()
+button btn1 "Say Hello" say_hello()
+
+# Button with args that calls a function
+button btn2 "Add 7 + 8" add(7, 8)
+
+# Button that shows message box from within the function
+func show_msg() msgbox("This message comes from *inside* the function!")
+button btn3 "Show MsgBox" show_msg()
